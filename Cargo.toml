@@ -1,0 +1,19 @@
+[package]
+name = "osm-reader"
+version = "0.1.0"
+edition = "2021"
+#default-run = "binnn"
+
+[dependencies]
+bytes = "1.7.1"
+prost = "0.13.2"
+fmmap = { version = "0.3.3", features = ["tokio-async"] }
+tokio = { version = "1.40.0", features = ["rt", "rt-multi-thread", "macros"] }
+flate2 = { version = "1.0.33" }
+async-compression = { version = "0.4.12", features = ["zlib", "tokio"] }
+thiserror = "1.0.63"
+flat_map = "0.0.10"
+byteorder = "1.5.0"
+
+[build-dependencies]
+prost-build = "0.13.2"
