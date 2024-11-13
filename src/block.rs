@@ -1,5 +1,5 @@
 use crate::dense::DenseNodeIterator;
-use crate::elements::{Node, Relation, Way};
+use crate::elements::{Element, Node, Relation, Way};
 use crate::proto;
 
 #[derive(Debug, Clone)]
@@ -25,6 +25,31 @@ impl PrimitiveBlock {
 
   pub fn groups(&self) -> PrimitiveGroupIterator {
     PrimitiveGroupIterator::new(&self.block)
+  }
+
+  pub fn for_each<F>(&self, mut f: F)
+  where
+    F: FnMut(Element),
+  {
+    for group in self.groups() {
+      if let Some(iterator) = group.dense_node() {
+        for dense in iterator {
+          f(Element::Node(dense))
+        }
+      }
+
+      for node in group.nodes() {
+        f(Element::Node(node))
+      }
+
+      for way in group.ways() {
+        f(Element::Way(way))
+      }
+
+      for relation in group.relations() {
+        f(Element::Relation(relation))
+      }
+    }
   }
 }
 
@@ -63,8 +88,12 @@ impl<'a> PrimitiveGroup<'a> {
     Self { block, group }
   }
 
-  pub fn dense_node(&self) -> DenseNodeIterator {
-    DenseNodeIterator::new(self.block, self.group.dense.as_ref().unwrap_or_default())
+  pub fn dense_node(&self) -> Option<DenseNodeIterator> {
+    if let Some(dense) = self.group.dense.as_ref() {
+      return Some(DenseNodeIterator::new(self.block, dense));
+    }
+
+    None
   }
 
   pub fn nodes(&self) -> ElementNodeIter {

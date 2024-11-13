@@ -6,8 +6,7 @@ use prost::Message;
 use byteorder::ReadBytesExt;
 use crate::block::{HeaderBlock, PrimitiveBlock};
 use crate::proto;
-use crate::error;
-use crate::error::OsmPbfError;
+use crate::error::{new_blob_error, new_proto_error, BlobError, OsmPbfError, OsmResult};
 
 const MAX_BLOB_HEADER_SIZE: u32 = 64 * 1024;
 const MAX_BLOB_MESSAGE_SIZE: u64 = 32 * 1024 * 1024;
@@ -42,7 +41,7 @@ pub struct Blob {
   pub blob: proto::Blob,
 }
 
-fn decode_blob<T: Message + Default>(blob: &proto::Blob) -> error::Result<T> {
+fn decode_blob<T: Message + Default>(blob: &proto::Blob) -> OsmResult<T> {
   use proto::blob::Data;
 
   match &blob.data {
@@ -54,15 +53,15 @@ fn decode_blob<T: Message + Default>(blob: &proto::Blob) -> error::Result<T> {
           a.read_to_end(&mut decompressed_bytes).unwrap();
           Ok(T::decode(Bytes::from(decompressed_bytes))?)
         }
-        _ => Err(OsmPbfError::UnsupportedCompressedType)
+        _ => Err(new_blob_error(BlobError::UnsupportedCompressedType))
       }
     }
-    None => Err(OsmPbfError::DecodeBlobDataError)
+    None => Err(new_blob_error(BlobError::DecodeBlobDataError))
   }
 }
 
 impl Blob {
-  pub fn decode(&self) -> error::Result<BlobDecode> {
+  pub fn decode(&self) -> OsmResult<BlobDecode> {
     match self.get_type() {
       BlobType::OsmHeader => {
         let header = decode_blob(&self.blob).map(HeaderBlock::new)?;
@@ -95,22 +94,22 @@ impl<R: Read + Send> BlobReader<R> {
     Self { reader, finished: false }
   }
 
-  fn read_blob_header(&mut self) -> Option<error::Result<proto::BlobHeader>> {
+  fn read_blob_header(&mut self) -> Option<OsmResult<proto::BlobHeader>> {
     let header_size = match self.reader.read_u32::<byteorder::BigEndian>() {
-      Ok(s) => s,
+      Ok(size)  if size < MAX_BLOB_HEADER_SIZE => size,
+      Ok(size) => {
+        self.finished = true;
+        return Some(Err(new_blob_error(BlobError::HeaderTooLarge(size))));
+      }
       Err(ref e) if e.kind() == ErrorKind::UnexpectedEof => {
         self.finished = true;
         return None;
       }
       Err(_) => {
         self.finished = true;
-        return Some(Err(OsmPbfError::ReadHeaderSizeError));
+        return Some(Err(new_blob_error(BlobError::ReadHeaderSizeError)));
       }
     };
-
-    if header_size >= MAX_BLOB_HEADER_SIZE {
-      todo!("error")
-    }
 
     let mut buffer: Vec<u8> = Vec::with_capacity(header_size as usize);
     self.reader.by_ref().take(header_size as u64)
@@ -121,7 +120,7 @@ impl<R: Read + Send> BlobReader<R> {
     let header = match proto::BlobHeader::decode(buffer) {
       Ok(h) => h,
       Err(e) => {
-        return Some(Err(OsmPbfError::DecodeBlobHeaderError));
+        return Some(Err(new_proto_error(e)));
       }
     };
 
@@ -130,7 +129,7 @@ impl<R: Read + Send> BlobReader<R> {
 }
 
 impl<R: Read + Send> Iterator for BlobReader<R> {
-  type Item = error::Result<Blob>;
+  type Item = OsmResult<Blob>;
 
   fn next(&mut self) -> Option<Self::Item> {
     if self.finished {
@@ -145,11 +144,14 @@ impl<R: Read + Send> Iterator for BlobReader<R> {
       None => return None,
     };
 
-    let blob_bytes = self.reader.copy_to_bytes(header.datasize as usize);
+    let mut buffer: Vec<u8> = Vec::with_capacity(header.datasize as usize);
+    self.reader.by_ref().take(header.datasize as u64).read_to_end(&mut buffer).expect("");
+
+    let blob_bytes = Bytes::from(buffer);
 
     match proto::Blob::decode(blob_bytes) {
       Ok(blob) => Some(Ok(Blob { blob, header })),
-      Err(e) => Some(Err(OsmPbfError::DecodeBlobError(e)))
+      Err(e) => Some(Err(new_proto_error(e)))
     }
   }
 }

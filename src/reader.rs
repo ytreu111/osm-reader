@@ -1,56 +1,35 @@
 use std::io::Read;
-use prost::Message;
-use crate::blob::{BlobDecode, BlobReader, BlobType};
+use crate::blob::{BlobDecode, BlobReader};
 use crate::elements::Element;
+use crate::error::OsmResult;
 
 pub struct OsmPbfReader<R: Read + Send> {
-  blob_reader: BlobReader<R>,
+  pub blob_reader: BlobReader<R>,
 }
 
 impl<R: Read + Send> OsmPbfReader<R> {
-  pub fn new(reader: R) -> Self {
-    let blob_reader = BlobReader::new(reader);
-
-    Self { blob_reader }
+  pub fn new(reader: R) -> OsmPbfReader<R> {
+    OsmPbfReader {
+      blob_reader: BlobReader::new(reader),
+    }
   }
 
-  pub fn for_each<F>(&self, f: F)
+  pub fn for_each<F>(self, mut f: F) -> OsmResult<()>
   where
     F: FnMut(Element),
   {
     for blob in self.blob_reader {
-      match blob {
-        Ok(blob) => {
-          match blob.get_type() {
-            BlobType::OsmData => {
-              match blob.decode().unwrap() {
-                BlobDecode::OsmData(block) => {
-                  for group in block.groups() {
-                    for dense in group.dense_node() {
-                      f(Element::Node(dense))
-                    }
-
-                    for node in group.nodes() {
-                      f(Element::Node(node))
-                    }
-
-                    for way in group.ways() {
-                      f(Element::Way(way))
-                    }
-
-                    for relation in group.relations() {
-                      f(Element::Relation(relation))
-                    }
-                  }
-                }
-                _ => {}
-              }
-            }
-            BlobType::OsmHeader | BlobType::Unknown(_) => {}
-          }
+      match blob?.decode() {
+        Ok(BlobDecode::OsmData(block)) => {
+          block.for_each(&mut f);
         }
-        _ => {}
+        Ok(_) => {}
+        Err(e) => return Err(e),
       }
     }
+
+    Ok(())
   }
+
+  pub fn par_for_each(self) {}
 }

@@ -1,5 +1,11 @@
+use std::fmt;
+use std::fmt::Formatter;
 use crate::{error, proto};
 use crate::proto::relation::MemberType;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::ser::{SerializeMap};
+use flat_map::{FlatMap, flat_map::{Keys, Values}};
+use serde::de::{MapAccess, Visitor};
 
 #[derive(Debug, Clone)]
 pub enum Element {
@@ -9,7 +15,7 @@ pub enum Element {
 }
 
 #[derive(Debug, Clone)]
-struct Tags(flat_map::FlatMap<String, String>);
+pub struct Tags(FlatMap<String, String>);
 
 impl Tags {
   fn new(block: &proto::PrimitiveBlock, keys: &Vec<u32>, vals: &Vec<u32>) -> Self {
@@ -37,6 +43,70 @@ impl Tags {
     }
 
     Self::new(block, &keys, &vals)
+  }
+
+  pub fn len(&self) -> usize {
+    self.0.len()
+  }
+
+  pub fn keys(&self) -> Keys<String, String> {
+    self.0.keys()
+  }
+
+  pub fn values(&self) -> Values<String, String> {
+    self.0.values()
+  }
+}
+
+impl Default for Tags {
+  fn default() -> Self {
+    Self(FlatMap::default())
+  }
+}
+
+impl Serialize for Tags {
+  fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+  where
+    S: Serializer,
+  {
+    let map = &self.0;
+    let mut s = serializer.serialize_map(Some(map.len()))?;
+
+
+    for (key, value) in map {
+      s.serialize_entry(key, value)?
+    }
+
+    s.end()
+  }
+}
+
+impl<'de> Deserialize<'de> for Tags {
+  fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+  where
+    D: Deserializer<'de>,
+  {
+    deserializer.deserialize_map(TagVisitor)
+  }
+}
+
+struct TagVisitor;
+impl<'de> Visitor<'de> for TagVisitor {
+  type Value = Tags;
+  fn expecting(&self, formatter: &mut Formatter) -> fmt::Result {
+    formatter.write_str("a key value map")
+  }
+
+  fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+  where
+    A: MapAccess<'de>,
+  {
+    let mut flat_map = FlatMap::new();
+    while let Ok(Some((key, value))) = map.next_entry::<String, String>() {
+      flat_map.insert(key, value);
+    };
+
+    Ok(Tags(flat_map))
   }
 }
 
@@ -117,7 +187,7 @@ impl Way {
 pub struct Relation {
   pub id: i64,
   pub tags: Tags,
-  pub(crate) members: Vec<RelMember>,
+  pub members: Vec<RelMember>,
 }
 
 impl Relation {
@@ -196,6 +266,16 @@ pub enum ElementId {
   Node(i64),
   Way(i64),
   Relation(i64),
+}
+
+impl ElementId {
+  pub fn get_id(&self) -> i64 {
+    match self {
+      ElementId::Node(v) => *v,
+      ElementId::Way(v) => *v,
+      ElementId::Relation(v) => *v,
+    }
+  }
 }
 
 pub(crate) fn str_from_stringtable(block: &proto::PrimitiveBlock, index: usize) -> error::Result<&str> {
