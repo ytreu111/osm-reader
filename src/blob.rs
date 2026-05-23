@@ -1,4 +1,4 @@
-use std::io::{ErrorKind, Read};
+use std::io::{self, ErrorKind, Read};
 use bytes::{Buf, Bytes, BytesMut};
 use flate2::read::ZlibDecoder;
 use fmmap::{MmapFileExt};
@@ -126,15 +126,23 @@ impl<R: Read + Send> BlobReader<R> {
 
     Some(Ok(header))
   }
+
+  fn rewind(&mut self) -> io::Result<()>
+  where
+    R: io::Seek,
+  {
+    self.reader.seek(io::SeekFrom::Start(0))?;
+    self.finished = false;
+
+    Ok(())
+  }
 }
 
 impl<R: Read + Send> Iterator for BlobReader<R> {
   type Item = OsmResult<Blob>;
 
   fn next(&mut self) -> Option<Self::Item> {
-    if self.finished {
-      return None;
-    }
+    if self.finished { return None; }
 
     let header = self.read_blob_header();
 
